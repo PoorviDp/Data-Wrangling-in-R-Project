@@ -1,0 +1,409 @@
+---
+title: "Exploratory Data Analysis of TMDB Movie dataset"
+author: "Poorvi Deshpande"
+date: "December 3, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+
+## Introduction 
+
+* Problem Statement
+
+The goal of this project is to derive insights about the dataset : TMDB movie dataset taken from Kaggle. This dataset contains various details about movies for our analysis. I want to analyse the given dataset to answer questions about the film industry like which movies have the highest average vote (IMDB rating), top highest grossing movie, movies with highest budget etc.
+
+* Implementation 
+
+The dataset has been scraped from Kaggle and manipulated according to the questions we want to answer in our analysis. 
+
+* Solution
+
+After obtaining cleaned dats, we perform exploratory data analysis on our dataset. Individual analysis is presented further in the report along with codes. 
+
+###
+
+## Packages Required
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)            #For Data transformation
+library(tidyverse)        #For data cleaning
+library(jsonlite)         #For manipulating JSON data
+library(wordcloud)        #For generating Word Cloud
+library(RColorBrewer)     #For further formatting
+library(ggplot2)          #Extension of ggplot2
+library(tm)               #For text mining
+library(lubridate)        #For date-time in R
+library(RColorBrewer)     #For color palette in R
+library(ggthemes)         #For themes in ggplot
+
+
+```
+
+###
+
+## Data Preparation 
+
+### {.tabset}
+
+#### DATASETS USED:
+
+I have used the TMDB Movie Dataset available on Kaggle. Link: https://www.kaggle.com/tmdb/tmdb-movie-metadata
+
+The movie dataset contains 4803 rows and 20 columns. 
+
+#####
+
+
+#### DATA IMPORTING:
+
+Importing Datasets in R from csv file
+
+```{r, message=FALSE, warning=FALSE}
+html_url <- "https://raw.githubusercontent.com/PoorviDp/Data-Wrangling-in-R-Project/master/tmdb_5000_movies.csv"
+movie <- read_csv(html_url,col_names = TRUE,na = "NA")
+
+## information about the tables : movie
+colnames(movie)
+dim(movie)
+
+```
+
+#####
+
+#### DATA CLEANING: 
+
+The first part of data cleaning involves removal of spurious characters (Â) from a the movie title, genre and plot keyword columns. This might be because we have scrapped the data from the net.
+
+Next step included removing duplicate data. 
+Duplicate data will skew our analysis hence needs to be removed.
+
+```{r, message=FALSE, warning=FALSE}
+## removing spurious characters
+movie$title <- (sapply(movie$title,gsub,pattern = "\\Â",replacement = ""))
+
+## deleting duplicate rows
+movie <- movie[!duplicated(movie$title), ]
+dim(movie)
+```
+
+When I glimpsed through the data file, I could see that some of the colums were in JSON format.
+So I tried creating different dataframes for extracting data from the json object. I use jsonlite library to extract the data. 
+
+```{r, message=FALSE, warning=FALSE}
+
+## transformation of "keywords" column into tibble
+keywords <- movie %>%    
+  filter(nchar(keywords) > 2) %>%                 # fiter out blank keywords field
+  mutate(                                         # create a new field 
+    js = lapply(keywords, fromJSON)               # containing a LIST of keyword and value pairs
+  ) %>%                                           # called id and name
+  unnest(js) %>%                                  # turn each keyword/value pairs in the LIST into a row
+  select(id, title, keywords = name)
+
+## Combining the keywords of a movie in a single column
+keywords <- aggregate(keywords ~.,data = keywords, paste, collapse = ",")
+
+#Combining the genres of a movie in a single column
+genres <- movie %>% filter(nchar(genres) > 2) %>%                   
+  mutate( js = lapply(genres, fromJSON)) %>%                                           
+  unnest(js) %>%                                  
+  select(id, title, genres = name) 
+
+genres <- aggregate(genres ~.,data = genres, paste, collapse = ",")
+
+# Combining production_companies
+production_companies <- movie %>% filter(nchar(production_companies) > 2) %>%                   
+  mutate( js = lapply(production_companies, fromJSON)) %>%                                           
+  unnest(js) %>%                                  
+  select(id, title, production_companies = name) 
+
+production_companies <- aggregate(production_companies ~.,data = production_companies, paste, collapse = ",")
+
+# Combining production countries
+
+production_countries <- movie %>%    
+  filter(nchar(production_countries) > 2) %>%     
+  mutate(                                         
+    js = lapply(production_countries, fromJSON)   
+  ) %>%                                          
+  unnest(js) %>%                                  
+  select(id, title, production_countries = name)
+
+countries <- movie %>%    
+  filter(nchar(production_countries) > 2) %>%     
+  mutate(                                         
+    js = lapply(production_countries, fromJSON)   
+  ) %>%                                          
+  unnest(js) %>%                                  
+  select(id, title, production_countries = name)
+
+production_countries <- aggregate(production_countries ~.,data = production_countries, paste, collapse = ",")
+
+# combining spoken languages
+spoken_languages <- movie %>%    
+  filter(nchar(spoken_languages) > 2) %>%        
+  mutate(                                         
+    js = lapply(spoken_languages, fromJSON)      
+  ) %>%                                          
+  unnest(js) %>%                                 
+  select(id, title, spoken_languages = iso_639_1) 
+
+spoken_languages <- aggregate(spoken_languages ~.,data = spoken_languages, paste, collapse = ",")
+
+
+```
+
+This creates comma seperated columns for 'keywords', 'genre', 'production_countries', 'production_companies', 'spoken_languages'.
+
+```{r}
+movies <- subset(movie, select = -c(genres, keywords, production_companies, production_countries,spoken_languages))
+glimpse(movies)
+```
+
+Combining these columns in the main movie data. 
+
+```{r}
+# Dropped existing unformatted columns in the main dataset, creating a new dataset "movies"
+movies <- subset(movie, select = -c(genres, keywords, production_companies, production_countries, spoken_languages))
+
+
+movies <- movies %>%
+  full_join(keywords, by = c("id", "title")) %>%
+  full_join(genres, by = c("id", "title")) %>%
+  full_join(production_companies, by = c("id", "title")) %>%
+  full_join(production_countries, by = c("id", "title")) %>%
+  full_join(spoken_languages, by = c("id", "title"))
+
+glimpse(movies)
+
+```
+
+* MISSING VALES: 
+There are missing values in some columns like homepage, budget, revenue, tagline columns. But I haven't removed them as of yet. I will be looking on how to handle missing values in Budget and revenue on further analysis.
+
+#####
+
+#### DATA PREVIEW 
+```{r, message=FALSE, warning=FALSE}
+
+library(DT)
+datatable(head(movies,30))
+
+```
+
+#####
+
+
+## Exploratory Data Analysis
+
+In this section, the data is analyzed using diverse set of packages, functions and graphical methods to explore the movies dataset. This analysis includes simple representations like a bar chart to statistical distributed box plots to understand the data in depth.
+
+### {.tabset}
+
+#### Analysis by average vote
+
+The vote of movie watchers is the determining factor to label a movie as a blockbuster or flop. 
+
+First let us see what is the average vote rating : 
+
+
+```{r, message=FALSE, warning=FALSE}
+
+ggplot(movies,aes(vote_average)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = mean(movie$vote_average,na.rm = TRUE),colour = "red") + 
+  ylab("Count of Movies") + 
+  xlab("Average Vote") + 
+  ggtitle("Histogram for average vote rating")
+
+```
+
+Mean : 6.092083
+
+Let us look at the top 20 movies with highest average_vote with color according to vote count. 
+
+Here, movies with vote count > 500 are considered as movies with less vote counts and high rating can be a misleading statistic.  
+
+```{r, message=FALSE, warning=FALSE}
+
+movies %>% select(title,vote_average,vote_count, budget) %>% 
+  filter(vote_count > 500 ) %>% arrange(desc(vote_average)) %>% head(20) %>%
+  ggplot(aes(x = title,y = vote_average,fill = budget )) + geom_bar(stat = "identity") + coord_flip(ylim = c(7, 9)) +
+  scale_fill_continuous()
+
+```
+
+Top 20 movies by popularity, color according to vote count : 
+
+```{r, message=FALSE, warning=FALSE}
+movies %>% select(title,vote_average,vote_count, popularity) %>% 
+  filter(vote_count > 300 ) %>%  head(30) %>%
+  ggplot(aes(x = title,y = popularity, fill = vote_count)) + geom_bar(stat = "identity") + coord_flip() +
+  scale_fill_continuous()
+
+```
+
+#####
+
+#### Analysis by Genre
+
+Every movie can be categorized under more than one genres. Genre is a comma seperated field. So, we first seperated the genres using the 'TM' package. Post this, the count of each genre was calculated and a wordcloud made it clear which genre is the most popular. 
+
+Graph of frequency of genres : 
+
+
+```{r, message=FALSE, warning=FALSE}
+
+genre1 <- Corpus(VectorSource(genres$genres))
+dtm <- DocumentTermMatrix(genre1)
+genre_freq <- colSums(as.matrix(dtm))
+freq <- sort(colSums(as.matrix(dtm)), decreasing = TRUE) 
+genre_wframe <- data.frame(word = names(genre_freq), freq = genre_freq)
+
+ggplot(genre_wframe, aes(x = reorder(word,-freq), y = freq)) +  
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Movie Genre frequency graph") + 
+  xlab("Genre") + 
+  ylab("Frequency")
+```
+
+Wordcloud of genres :
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(10)
+pallete <- brewer.pal(8,"Accent")
+wordcloud(genre_wframe$word,genre_wframe$freq,random.order = FALSE,
+          rot.per = .15, colors = pallete , scale = c(4,.9),
+          title = "WordCloud: Movie Genres")
+
+```
+
+#####
+
+#### Analysis by Country
+
+Added a new column for year of release since we want to categorize movies according to year
+
+```{r, message=FALSE, warning=FALSE, echo= FALSE}
+
+year <- year(movies$release_date)
+movies$year <- year
+
+```
+
+
+Heat map of number of movies by year and country : This shows us number of movies released segregated by years in various countries. We can see that United States witnesses the largest number of releases in the recent years. 
+
+```{r, message=FALSE, warning=FALSE}
+
+country_movie_summary <- inner_join(movies,countries) %>% select(year,production_countries) %>%
+             group_by(year,production_countries) %>% mutate(movie_count = n())
+
+country_movie_summary %>% ggplot(aes(year, production_countries)) + 
+  geom_tile(aes(fill = movie_count),colour = "yellow") +
+  scale_fill_gradient(low = "orange",high = "red") +
+  xlab("Year of movie release") + 
+  ylab("Country") + 
+  ggtitle("Heat Map: Country vs Movie Release Year") + 
+  guides(fill = FALSE)
+
+```
+
+
+** Some trends of Revenue and Budget: 
+
+We would like to see which countries are very enthusiastic about movies. We can see this by plotting a boxplot of countries over movie revenue. 
+
+: movie revenue variation by country
+
+
+```{r, message=FALSE, warning=FALSE}
+
+ggplot(subset(movies, production_countries %in% country_movie_summary$production_countries),
+       aes(x=production_countries,y=revenue/1000000))+
+geom_boxplot()+
+  theme(axis.text.x=element_text(angle=45, hjust=1))+
+  ylab("Average Movie Revenue (Million $)")+
+  xlab("")+
+  ggtitle("Movie Revenue variation by Country")+
+  ylim(0,50)
+
+```
+
+Here is a barplot of the most expensive movies :
+
+```{r, message=FALSE, warning=FALSE}
+
+movies %>% select(original_title,budget) %>% drop_na(original_title) %>% arrange(desc(budget)) %>% 
+  head(10) %>%  ggplot(aes(reorder(original_title,budget),budget,fill = original_title)) + 
+  geom_bar(stat = "identity") + scale_fill_brewer(palette = "Spectral" )  + 
+  theme(axis.text.x = element_text(angle = 90),plot.title = element_text(color = "Black"),
+        legend.position = "none") + scale_y_continuous(labels = scales::comma) +
+  labs(x = "",y = "Total Budget in $",title = "Top 10 most expensive movies")
+
+```
+
+#####
+
+#### Analysis by Time
+
+Movies released by month: 
+
+```{r, message=FALSE, warning=FALSE}
+
+
+movie$Year = as.factor(format(movie$release_date,"%Y"))
+movie$Date = as.factor(format(movie$release_date,"%d"))
+movie$month = month.abb[(as.factor(format(movie$release_date,"%m")))]
+movie %>% group_by(month) %>% drop_na(month) %>% 
+  summarise(count = n()) %>% arrange(desc(month)) %>% 
+  ggplot(aes(reorder(month,count),count,fill = month)) + 
+  geom_bar(stat = "identity") + theme(plot.title = element_text(size = 14, colour = "black"),
+                                  axis.text.x = element_text(angle = 90),legend.position = "none") + 
+  labs(x = "",y = "Total number of movies released",
+       title = "Number of Movies Releases per month") + 
+  coord_flip() + geom_label(aes(label = count))
+```
+
+Let us also look at the boxplot of the average votes received and the movie release month.
+
+```{r, message=FALSE, warning=FALSE}
+
+movie %>% drop_na(month) %>% ggplot(aes(month,vote_average,fill = month)) + 
+  geom_boxplot(outlier.colour = "red",na.rm = TRUE) + 
+  theme(plot.title = element_text(size = 14,face = "italic",colour = "black"),
+        axis.text.x = element_text(angle = 90),legend.position = "none") +
+  labs(x = "", y = "Average Vote",title = "Boxplot of Average votes received by month") + 
+  coord_flip()
+
+```
+
+#####
+
+## Summary 
+
+What good is our analysis if we cannot extract meaningful insights about the data columns ! 
+Some points that we can make by looking at the plots and charts we plotted are as follows : 
+
+* Average movie IMDB Score is  6.09. 
+* Dark Knight has the highest budget in the top 10 movies based on average vote. 
+* Jurrasic World is the most popular movie among masses followed by Captain America: Civil war and The Avengers. 
+* Drama, Comedy and Thriller are the top genres. As seen in the bar chart and wordcloud.
+* US produces the most number od movies. It has a consistent movie production since 1960 with a sudden increase in the number in the last decade. United Kingdom, Japan, Italy, Germany and France are the only countries other than US to produce movies before 1980s.
+* Pirates of the Caribbean : On Stranger Tides is the most expensive movie made. 
+* September witnesses the most number of movies (588) released followed by Oct and December. 
+
+
+
+###
+
+
+
+
